@@ -3,7 +3,7 @@ FastAPI Backend for RAG Chatbot
 """
 import os
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Body, Request
+from fastapi import FastAPI, HTTPException, Body, Request, UploadFile, File
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -115,6 +115,43 @@ async def initialize_system(request: InitRequest = Body(...)):
         return {"message": "System initialized successfully", "success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Initialization failed: {str(e)}")
+
+@app.post("/upload")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    """Upload documents and re-initialize the system."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+        
+    saved_files = []
+    for file in files:
+        if not file.filename.lower().endswith(('.pdf', '.txt')):
+            continue
+            
+        file_path = os.path.join(DOCUMENT_DIRECTORY, file.filename)
+        try:
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+            saved_files.append(file.filename)
+        except Exception as e:
+            print(f"Error saving {file.filename}: {e}")
+            
+    if not saved_files:
+        raise HTTPException(status_code=400, detail="No valid PDF or TXT files were uploaded")
+        
+    # Re-initialize the system
+    try:
+        vector_store = initialize_rag_system(force_recreate=True)
+        if vector_store:
+            app_state["vector_store"] = vector_store
+            app_state["chain"] = create_chatbot(vector_store)
+            app_state["initialized"] = True
+        return {
+            "message": f"Successfully uploaded {len(saved_files)} files and re-initialized system.",
+            "files": saved_files,
+            "success": True
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Files uploaded but re-initialization failed: {str(e)}")
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
